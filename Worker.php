@@ -33,7 +33,7 @@ class Worker
      *
      * @var string
      */
-    const VERSION = '3.5.4';
+    const VERSION = '3.5.5';
 
     /**
      * Status starting.
@@ -552,13 +552,11 @@ class Worker
             }
 
             // Get unix user of the worker process.
-            if (static::$_OS === 'linux') {
-                if (empty($worker->user)) {
-                    $worker->user = static::getCurrentUser();
-                } else {
-                    if (posix_getuid() !== 0 && $worker->user != static::getCurrentUser()) {
-                        static::log('Warning: You must have the root privileges to change uid and gid.');
-                    }
+            if (empty($worker->user)) {
+                $worker->user = static::getCurrentUser();
+            } else {
+                if (posix_getuid() !== 0 && $worker->user != static::getCurrentUser()) {
+                    static::log('Warning: You must have the root privileges to change uid and gid.');
                 }
             }
 
@@ -629,19 +627,19 @@ class Worker
     protected static function displayUI()
     {
         global $argv;
-        if (isset($argv[1])) {
-            // Support not display ui: php serv.php start/restart -q , php serv.php start/restart -d -q
-            if ( (isset($argv[2]) && ($argv[2] === '-q')) || (isset($argv[2]) && ($argv[2] === '-d') && isset($argv[3]) && ($argv[3] === '-q')) ) {
-                return;
-            }
+        if (in_array('-q', $argv)) {
+            return;
+        }
+        if (static::$_OS !== 'linux') {
+            static::safeEcho("----------------------- WORKERMAN -----------------------------\r\n");
+            static::safeEcho('Workerman version:'. static::VERSION. "          PHP version:". PHP_VERSION. "\r\n");
+            static::safeEcho("------------------------ WORKERS -------------------------------\r\n");
+            static::safeEcho("worker               listen                              processes status\r\n");
+            return;
         }
         static::safeEcho("\033[1A\n\033[K-----------------------\033[47;30m WORKERMAN \033[0m-----------------------------\r\n\033[0m");
         static::safeEcho('Workerman version:'. static::VERSION. "          PHP version:". PHP_VERSION. "\r\n");
         static::safeEcho("------------------------\033[47;30m WORKERS \033[0m-------------------------------\r\n");
-        if (static::$_OS !== 'linux') {
-            static::safeEcho("worker               listen                              processes status\r\n");
-            return;
-        }
         static::safeEcho("\033[47;30muser\033[0m". str_pad('',
                 static::$_maxUserNameLength + 2 - strlen('user')). "\033[47;30mworker\033[0m". str_pad('',
                 static::$_maxWorkerNameLength + 2 - strlen('worker')). "\033[47;30mlisten\033[0m". str_pad('',
@@ -682,7 +680,7 @@ class Worker
             'status',
             'connections',
         );
-        $usage = "Usage: php yourfile.php {" . implode('|', $available_commands) . "} [-d]\n";
+        $usage = "Usage: php yourfile <command> [mode]\nCommands: \nstart\t\tStart worker in DEBUG mode.\n\t\tUse mode -d to start in DAEMON mode.\nstop\t\tStop worker.\n\t\tUse mode -g to stop gracefully.\nrestart\t\tRestart workers.\n\t\tUse mode -d to start in DAEMON mode.\n\t\tUse mode -g to stop gracefully.\nreload\t\tReload codes.\n\t\tUse mode -g to reload gracefully.\nstatus\t\tGet worker status.\n\t\tUse mode -d to show live status.\nconnections\tGet worker connections.\n";
         if (!isset($argv[1]) || !in_array($argv[1], $available_commands)) {
             exit($usage);
         }
