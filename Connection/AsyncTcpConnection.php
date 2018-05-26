@@ -156,20 +156,20 @@ class AsyncTcpConnection extends TcpConnection
 
         // For statistics.
         self::$statistics['connection_count']++;
-        $this->maxSendBufferSize        = self::$defaultMaxSendBufferSize;
-        $this->_contextOption           = $context_option;
-        static::$connections[$this->id] = $this;
+        $this->maxSendBufferSize         = self::$defaultMaxSendBufferSize;
+        $this->_contextOption            = $context_option;
+        static::$connections[$this->_id] = $this;
     }
 
     /**
      * Do connect.
      *
-     * @return void 
+     * @return void
      */
     public function connect()
     {
         if ($this->_status !== self::STATUS_INITIAL && $this->_status !== self::STATUS_CLOSING &&
-             $this->_status !== self::STATUS_CLOSED) {
+            $this->_status !== self::STATUS_CLOSED) {
             return;
         }
         $this->_status           = self::STATUS_CONNECTING;
@@ -199,7 +199,7 @@ class AsyncTcpConnection extends TcpConnection
             }
             return;
         }
-        // Add socket to global event loop waiting connection is successfully established or faild. 
+        // Add socket to global event loop waiting connection is successfully established or faild.
         Worker::$globalEvent->add($this->_socket, EventInterface::EV_WRITE, array($this, 'checkConnection'));
         // For windows.
         if(DIRECTORY_SEPARATOR === '\\') {
@@ -214,7 +214,8 @@ class AsyncTcpConnection extends TcpConnection
      * @return void
      */
     public function reConnect($after = 0) {
-        $this->_status = self::STATUS_INITIAL;
+        $this->_status                   = self::STATUS_INITIAL;
+        static::$connections[$this->_id] = $this;
         if ($this->_reconnectTimer) {
             Timer::del($this->_reconnectTimer);
         }
@@ -228,7 +229,7 @@ class AsyncTcpConnection extends TcpConnection
     /**
      * Get remote address.
      *
-     * @return string 
+     * @return string
      */
     public function getRemoteHost()
     {
@@ -280,10 +281,9 @@ class AsyncTcpConnection extends TcpConnection
         if(DIRECTORY_SEPARATOR === '\\') {
             Worker::$globalEvent->del($socket, EventInterface::EV_EXCEPT);
         }
+
         // Check socket state.
         if ($address = stream_socket_get_name($socket, true)) {
-            // Remove write listener.
-            Worker::$globalEvent->del($socket, EventInterface::EV_WRITE);
             // Nonblocking.
             stream_set_blocking($socket, 0);
             // Compatible with hhvm
@@ -297,17 +297,22 @@ class AsyncTcpConnection extends TcpConnection
                 socket_set_option($raw_socket, SOL_TCP, TCP_NODELAY, 1);
             }
 
+            // Remove write listener.
+            Worker::$globalEvent->del($socket, EventInterface::EV_WRITE);
+
             // SSL handshake.
-            if ($this->transport === 'ssl' && $this->doSslHandshake($socket)) {
-                $this->_sslHandshakeCompleted = true;
+            if ($this->transport === 'ssl') {
+                $this->_sslHandshakeCompleted = $this->doSslHandshake($socket);
+            } else {
+                // There are some data waiting to send.
+                if ($this->_sendBuffer) {
+                    Worker::$globalEvent->add($socket, EventInterface::EV_WRITE, array($this, 'baseWrite'));
+                }
             }
 
             // Register a listener waiting read event.
             Worker::$globalEvent->add($socket, EventInterface::EV_READ, array($this, 'baseRead'));
-            // There are some data waiting to send.
-            if ($this->_sendBuffer && $this->transport !== 'ssl') {
-                Worker::$globalEvent->add($socket, EventInterface::EV_WRITE, array($this, 'baseWrite'));
-            }
+
             $this->_status                = self::STATUS_ESTABLISHED;
             $this->_remoteAddress         = $address;
 
@@ -345,46 +350,5 @@ class AsyncTcpConnection extends TcpConnection
                 $this->onConnect = null;
             }
         }
-    }
-
-    /**
-     * SSL handshake.
-     *
-     * @param $socket
-     * @return bool
-     */
-    public function doSslHandshake($socket){
-        if (feof($socket)) {
-            $this->destroy();
-            return false;
-        }
-        $ret = stream_socket_enable_crypto($socket, true, STREAM_CRYPTO_METHOD_SSLv2_CLIENT |
-            STREAM_CRYPTO_METHOD_SSLv23_CLIENT);
-        // Negotiation has failed.
-        if(false === $ret) {
-            if (!feof($socket)) {
-                echo "\nSSL Handshake as client fail. \nBuffer:".bin2hex(fread($socket, 8182))."\n";
-            }
-            $this->destroy();
-            return false;
-        } elseif(0 === $ret) {
-            // There isn't enough data and should try again.
-            return false;
-        }
-        if (isset($this->onSslHandshake)) {
-            try {
-                call_user_func($this->onSslHandshake, $this);
-            } catch (\Exception $e) {
-                Worker::log($e);
-                exit(250);
-            } catch (\Error $e) {
-                Worker::log($e);
-                exit(250);
-            }
-        }
-        if ($this->_sendBuffer) {
-            Worker::$globalEvent->add($socket, EventInterface::EV_WRITE, array($this, 'baseWrite'));
-        }
-        return true;
     }
 }
